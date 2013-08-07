@@ -35,7 +35,7 @@ import scala.actors.Actor._
 import scala.collection._
 import scala.collection.JavaConverters._
 import java.net.ServerSocket
-import java.util.concurrent.TimeUnit 
+import java.util.concurrent.TimeUnit
 import annotation.tailrec
 
 /* Message Server for whole cluster */
@@ -51,15 +51,15 @@ class MessageServer(port: Int, allSources: immutable.Map[String, Source], isTest
         msClient.sendMessage(TimeToStartMessage())
       }
     }
-    // start to build hash ring after 3 mins after message server starts 
+    // start to build hash ring after 3 mins after message server starts
     startScheduler.schedule(beeper, 3, TimeUnit.MINUTES);
-    
+
     info("MessageServerThread: Start listening to :" + port)
     val serverSocketChannel = ServerSocketChannel.open()
     serverSocketChannel.socket().bind(new InetSocketAddress(port))
     debug("server started, listening " + port)
     // for delayed start
-    var isInStartGracePeroid = false
+    var isInStartGracePeroid = true
     // set join request nodes during startup grace peroid
     var askedJoinNodes: Set[Host] = Set.empty
 
@@ -80,7 +80,7 @@ class MessageServer(port: Int, allSources: immutable.Map[String, Source], isTest
             val oldRingIPSet = ring2.iPs.toSet
             val ipSetToRemove1 = ipSetToRemove.filter(ip => oldRingIPSet.contains(ip))
             val newHostList = ring2.iPs.filter(ip => !ipSetToRemove.contains(ip))
-            debug("oldRingIPSet = " + oldRingIPSet + ", ipSetToRemove = " + ipSetToRemove + ", ipSetToRemove1 = " + ipSetToRemove1)            
+            debug("oldRingIPSet = " + oldRingIPSet + ", ipSetToRemove = " + ipSetToRemove + ", ipSetToRemove1 = " + ipSetToRemove1)
             if (ipSetToRemove1.isEmpty) {
               info("MessageServer: NodeRemoveMessage - " + ipSetToRemove + " is already removed in message server")
               out.writeObject(ACKMessage)
@@ -134,6 +134,8 @@ class MessageServer(port: Int, allSources: immutable.Map[String, Source], isTest
 
           case NodeJoinMessage(hostToAdd: Host) =>
             info("MessageServer: Received node join message: " + msg)
+            // send ACK to reported
+            out.writeObject(ACKMessage)
 
             if (isInStartGracePeroid) {
               info("MessageServer: Still in start grace peroid")
@@ -141,8 +143,6 @@ class MessageServer(port: Int, allSources: immutable.Map[String, Source], isTest
             } else {
               lastCmdID += 1
               lastRingUpdateCmdID = lastCmdID
-              // send ACK to reported
-              out.writeObject(ACKMessage)
               // update hash ring
               ring2 = if (ring2 == null) HashRing2.initFromHost(hostToAdd)
               else if (ring2.iPs.contains(hostToAdd.ip)) {
@@ -172,15 +172,15 @@ class MessageServer(port: Int, allSources: immutable.Map[String, Source], isTest
                 SendNewRing ! SendMessageToNode(lastCmdID, ring2.iPs, port + 1, PrepareAddHostMessage(lastCmdID, ring2.hash, ring2.iPs, ring2.ipHostMap), port)
               }
             }
-            
-          case TimeToStartMessage =>
+
+          case TimeToStartMessage() =>
             info("MessageServer: startup grace peroid is up")
+
             lastCmdID += 1
             lastRingUpdateCmdID = lastCmdID
-            // send ACK to reported
-            out.writeObject(ACKMessage)
+
             // generate hash ring
-            HashRing2.initFromHosts(askedJoinNodes.toIndexedSeq)
+            ring2 = HashRing2.initFromHosts(askedJoinNodes.toIndexedSeq)
             // TODO: replace isTest with new SendNewRing
             if (!isTest) {
               // if it is unit test, don't send new ring to all nodes
@@ -216,7 +216,7 @@ class MessageServer(port: Int, allSources: immutable.Map[String, Source], isTest
             // send update ring message to Nodes
             SendNewRing ! SendMessageToNode(cmdID, ring2.iPs, port + 1, UpdateRing(cmdID), port)
 
-          case IPCHECKDONE =>
+          case IPCHECKDONE() =>
             info("MessageServer: IP CHECK received")
 
           case AskPermitToStartSourceMessage(sourceName, host) =>
@@ -459,7 +459,7 @@ class LocalMessageServer(port: Int, runtime: AppRuntime) extends Runnable with L
                   setAminusSetB(setA.tail, setB, rlt + setA.head)
               }
             }
-            
+
             info("LocalMessageServer: Received " + msg)
             out.writeObject(ACKMessage)
 
@@ -468,7 +468,7 @@ class LocalMessageServer(port: Int, runtime: AppRuntime) extends Runnable with L
               val oldIPs: Set[String] = if (runtime.appStatic.systemHosts == null) Set.empty else runtime.appStatic.systemHosts.keySet
               val addedIPs = setAminusSetB(newIPs, oldIPs, immutable.Set.empty)
               val removedIPs = setAminusSetB(oldIPs, newIPs, immutable.Set.empty)
-              
+
               runtime.ring = runtime.candidateRing
               runtime.appStatic.systemHosts = runtime.candidateHostList._2
               runtime.candidateRing = null

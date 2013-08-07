@@ -162,7 +162,7 @@ class AppRuntime(appID: Int,
     }
   }
   trySendNodeJoinMessageToMessageServer(10000) // try to send join message to message server for 10 sec
-  info("Send node join message to message server")
+  info("Sent node join message to message server")
 
   def waitHashRing(time: Int) {
     if (time <= 0) {
