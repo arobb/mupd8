@@ -29,6 +29,8 @@ case class ACKPrepareAddHostMessage(cmdID: Int, hostToAdd: String) extends Messa
 case class ACKPrepareRemoveHostMessage(cmdID: Int, hostToRemove: String) extends MessageWOACK   // hostToRemove: ip
 case class AllNodesACKedPrepareMessage(cmdID: Int) extends MessageWOACK
 case class ACKTIMEOUTMessage(cmdID: Int) extends MessageWACK
+case class TimeToStartMessage() extends MessageWOACK
+
 // for ip check
 case class IPCHECKDONE() extends MessageWOACK
 
@@ -50,10 +52,6 @@ case class PrepareRemoveHostMessage(cmdID: Int, hashInNewRing: IndexedSeq[String
   override def toString() = "PrepareRemoveHostMessage(" + cmdID + ", " + iP2HostMap + ")"
 }
 case class UpdateRing(cmdID: Int) extends MessageWACK
-
-//// To MessageServerClient
-//case class ACKNodeJoin(node: String) extends MessageWACK   // node: ip
-//case class ACKNodeRemove(node: String) extends MessageWACK // node: ip
 
 //
 // Start source readers

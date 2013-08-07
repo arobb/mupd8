@@ -175,7 +175,7 @@ class AppRuntime(appID: Int,
       }
     }
   }
-  waitHashRing(5000) // wait hash ring from message server for 5 sec
+  waitHashRing(1000 * 5 * 60) // wait hash ring from message server for 5 mins
   info("Update ring from Message server")
 
   if (ring == null) {

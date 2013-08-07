@@ -17,7 +17,6 @@
 
 package com.walmartlabs.mupd8
 
-//import java.nio.channels._
 import java.nio.channels.Channels
 import java.nio.channels.ServerSocketChannel
 import java.net.InetSocketAddress
@@ -36,6 +35,7 @@ import scala.actors.Actor._
 import scala.collection._
 import scala.collection.JavaConverters._
 import java.net.ServerSocket
+import java.util.concurrent.TimeUnit 
 import annotation.tailrec
 
 /* Message Server for whole cluster */
@@ -43,10 +43,25 @@ class MessageServer(port: Int, allSources: immutable.Map[String, Source], isTest
 
   /* socket server to communicate clients */
   override def run() {
+    // start grace peroid schedule
+    val startScheduler = Executors.newScheduledThreadPool(1);
+    val beeper = new Runnable() {
+      def run() {
+        val msClient = new MessageServerClient("localhost", port)
+        msClient.sendMessage(TimeToStartMessage())
+      }
+    }
+    // start to build hash ring after 3 mins after message server starts 
+    startScheduler.schedule(beeper, 3, TimeUnit.MINUTES);
+    
     info("MessageServerThread: Start listening to :" + port)
     val serverSocketChannel = ServerSocketChannel.open()
     serverSocketChannel.socket().bind(new InetSocketAddress(port))
     debug("server started, listening " + port)
+    // for delayed start
+    var isInStartGracePeroid = false
+    // set join request nodes during startup grace peroid
+    var askedJoinNodes: Set[Host] = Set.empty
 
     // Incoming messages need to be processed sequentially
     // since it might cause hash ring accordingly. So NOT
@@ -119,18 +134,53 @@ class MessageServer(port: Int, allSources: immutable.Map[String, Source], isTest
 
           case NodeJoinMessage(hostToAdd: Host) =>
             info("MessageServer: Received node join message: " + msg)
+
+            if (isInStartGracePeroid) {
+              info("MessageServer: Still in start grace peroid")
+              askedJoinNodes = askedJoinNodes + hostToAdd
+            } else {
+              lastCmdID += 1
+              lastRingUpdateCmdID = lastCmdID
+              // send ACK to reported
+              out.writeObject(ACKMessage)
+              // update hash ring
+              ring2 = if (ring2 == null) HashRing2.initFromHost(hostToAdd)
+              else if (ring2.iPs.contains(hostToAdd.ip)) {
+                ring2 // if ring2 already contains this node, do nothing
+              } else {
+                val newHostList = ring2.iPs :+ hostToAdd.ip
+                ring2.add(newHostList, hostToAdd)
+              }
+              // TODO: replace isTest with new SendNewRing
+              if (!isTest) {
+                // if it is unit test, don't send new ring to all nodes
+                // Local message server's port is always port + 1
+                info("NodeJoinMessage: cmdID " + lastCmdID + " - Sending " + ring2 + " to " + ring2.iPs.map(ring2.ipHostMap(_)))
+                // reset Timer
+                TimerActor.stopTimer(lastCmdID - 1, "cmdID: " + lastCmdID)
+                TimerActor.startTimer(lastCmdID, 2000L, () => {
+                  val notAckedNodes = AckedNodeCounter.nodesNotAcked
+                  // not all nodes send ack message back
+                  info("NodeJoinMessage: " + (lastCmdID, notAckedNodes) + " TIMEOUT")
+                  val msClient = new MessageServerClient("localhost", port)
+                  msClient.sendMessage(NodeRemoveMessage(notAckedNodes))
+                })
+                // reset counter
+                AckedNodeCounter ! StartCounter(lastCmdID, ring2.iPs, "localhost", port)
+
+                // Send prepare ring update message
+                SendNewRing ! SendMessageToNode(lastCmdID, ring2.iPs, port + 1, PrepareAddHostMessage(lastCmdID, ring2.hash, ring2.iPs, ring2.ipHostMap), port)
+              }
+            }
+            
+          case TimeToStartMessage =>
+            info("MessageServer: startup grace peroid is up")
             lastCmdID += 1
             lastRingUpdateCmdID = lastCmdID
             // send ACK to reported
             out.writeObject(ACKMessage)
-            // update hash ring
-            ring2 = if (ring2 == null) HashRing2.initFromHost(hostToAdd)
-            else if (ring2.iPs.contains(hostToAdd.ip)) {
-              ring2 // if ring2 already contains this node, do nothing
-            } else {
-              val newHostList = ring2.iPs :+ hostToAdd.ip
-              ring2.add(newHostList, hostToAdd)
-            }
+            // generate hash ring
+            HashRing2.initFromHosts(askedJoinNodes.toIndexedSeq)
             // TODO: replace isTest with new SendNewRing
             if (!isTest) {
               // if it is unit test, don't send new ring to all nodes
@@ -151,6 +201,7 @@ class MessageServer(port: Int, allSources: immutable.Map[String, Source], isTest
               // Send prepare ring update message
               SendNewRing ! SendMessageToNode(lastCmdID, ring2.iPs, port + 1, PrepareAddHostMessage(lastCmdID, ring2.hash, ring2.iPs, ring2.ipHostMap), port)
             }
+            isInStartGracePeroid = false
 
           case ACKPrepareAddHostMessage(cmdID, host) =>
             info("MessageServer: Receive ACKPrepareAddHostMessage - " + (cmdID, ring2.ipHostMap(host)))
