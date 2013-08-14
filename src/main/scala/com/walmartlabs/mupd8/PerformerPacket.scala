@@ -45,7 +45,7 @@ case class PerformerPacket(pri: Priority,
                            event: Event,
                            stream: String, // This field can be replaced by source performer ID
                            appRun: AppRuntime) extends MapUpdateClass[PerformerPacket] with Logging {
-  override def getKey = new PerformerPacketKey(pid, slateKey)
+  override def getKey = PerformerPacketKey(pid, slateKey)
 
   override def compareTo(other: PerformerPacket) = pri.compareTo(other.pri)
 

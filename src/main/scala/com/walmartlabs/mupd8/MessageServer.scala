@@ -75,7 +75,7 @@ class MessageServer(port: Int, allSources: immutable.Map[String, Source], isTest
         val msg = in.readObject()
         msg match {
           case NodeRemoveMessage(ipSetToRemove) =>
-            info("MessageServer: received node remove message: " + msg)
+            info("MessageServer: received NodeRemoveMessage: remove " + ipSetToRemove)
             // check if node is already removed
             val oldRingIPSet = ring2.iPs.toSet
             val ipSetToRemove1 = ipSetToRemove.filter(ip => oldRingIPSet.contains(ip))
@@ -156,8 +156,8 @@ class MessageServer(port: Int, allSources: immutable.Map[String, Source], isTest
                 // Local message server's port is always port + 1
                 info("NodeJoinMessage: cmdID " + lastCmdID + " - Sending " + ring2 + " to " + ring2.iPs.map(ring2.ipHostMap(_)))
                 // reset Timer
-                TimerActor.stopTimer(lastCmdID - 1, "cmdID: " + lastCmdID)
-                TimerActor.startTimer(lastCmdID, 2000L, () => {
+                Timer.stopTimer(lastCmdID - 1, "cmdID: " + lastCmdID)
+                Timer.startTimer(lastCmdID, 2000L, () => {
                   val notAckedNodes = AckedNodeCounter.nodesNotAcked
                   // not all nodes send ack message back
                   info("NodeJoinMessage: " + (lastCmdID, notAckedNodes) + " TIMEOUT")
@@ -180,6 +180,7 @@ class MessageServer(port: Int, allSources: immutable.Map[String, Source], isTest
 
             // generate hash ring
             ring2 = HashRing2.initFromHosts(askedJoinNodes.toIndexedSeq)
+            debug("MessageServer: startup ring = " + ring2)
             // TODO: replace isTest with new SendNewRing
             if (!isTest) {
               // if it is unit test, don't send new ring to all nodes
@@ -307,6 +308,8 @@ class MessageServer(port: Int, allSources: immutable.Map[String, Source], isTest
 
   AckedNodeCounter.start
 
+  // For now it only check node with sources on it
+  // From there those nodes can detect other nodes' failure
   object PingCheck extends Actor {
     override def act() {
       while (keepRunning) {
@@ -466,15 +469,19 @@ class LocalMessageServer(port: Int, runtime: AppRuntime) extends Runnable with L
               val oldIPs: Set[String] = if (runtime.appStatic.systemHosts == null) Set.empty else runtime.appStatic.systemHosts.keySet
               val addedIPs = setAminusSetB(newIPs, oldIPs, immutable.Set.empty)
               val removedIPs = setAminusSetB(oldIPs, newIPs, immutable.Set.empty)
+              debug("UpdateRing: addedIPs = " + addedIPs + ", removedIPs = " + removedIPs)
+              
+              // Adjust nodes in cluster before switch ring
+              // o.w. events for addedIPs might not be able to be sent new nodes
+              if (runtime.pool != null) {
+                runtime.pool.cluster.addHosts(addedIPs)
+                runtime.pool.cluster.removeHosts(removedIPs)
+              }
 
               runtime.ring = runtime.candidateRing
               runtime.appStatic.systemHosts = runtime.candidateHostList._2
               runtime.candidateRing = null
               runtime.candidateHostList = null
-              if (runtime.pool != null) {
-                runtime.pool.cluster.addHosts(addedIPs)
-                runtime.pool.cluster.removeHosts(removedIPs)
-              }
               runtime.flushSlatesInBufferToQueue
               info("LocalMessageServer: cmdID - " + cmdID + " update ring done")
             } else {
